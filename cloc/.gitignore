@@ -1,0 +1,17 @@
+# Ignore coco dataset
+/coco/
+
+# Ignore clic dataset
+/clic/
+
+# Ignore kodak dataset
+/kodak/
+
+# Ignore celeba dataset
+/celeba/
+
+# Ignore VSCode settings and folders
+.vscode/
+
+# Ignore Python bytecode files
+__pycache__/
