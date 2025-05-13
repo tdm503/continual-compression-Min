@@ -8,6 +8,40 @@ import cloc
 from cloc.training import set_logging, set_device, set_model, adjust_lr, vr_evaluate, save_checkpoints
 
 
+from tqdm import tqdm
+import torch
+import cloc
+
+def compute_loss_per_image(model, dataset, device):
+    loader = cloc.datasets.make_val_loader(dataset, batch_size=1, workers=1)
+    model.eval()
+    losses = []
+    indices = []
+
+    with torch.no_grad():
+        for idx, data in enumerate(tqdm(loader, desc='Computing per-image losses'), start=1):
+            # data[0] là tensor ảnh
+            image = data[0].to(device)
+            if image.dim() == 3:
+                image = image.unsqueeze(0)
+            loss = model(image)['loss'].item()
+
+            losses.append(loss)
+            # chỉ thêm idx nếu chưa có (đề phòng duplicate)
+            if idx not in indices:
+                indices.append(idx)
+
+    return indices, losses
+
+
+def select_top_k_percent(indices, losses, percent=0.7):
+    combined = list(zip(indices, losses))
+    combined.sort(key=lambda x: x[1], reverse=True)
+    k = int(len(combined) * percent)
+    top_indices = [idx for idx, _ in combined[:k]]
+    return top_indices
+
+
 def parse_args():
     # ====== set the run settings ======
     parser = argparse.ArgumentParser()
@@ -24,15 +58,15 @@ def parse_args():
     parser.add_argument('--trainset',   type=str,   default='coco_train2017')
     parser.add_argument('--valset',     type=str,   default='kodak')
     # optimization setting
-    parser.add_argument('--batch_size', type=int,   default=32)
-    parser.add_argument('--iterations', type=int,   default=500_000)
+    parser.add_argument('--batch_size', type=int,   default=8)
+    parser.add_argument('--iterations', type=int,   default=1)
     parser.add_argument('--lr',         type=float, default=2e-4)
     parser.add_argument('--lr_sched',   type=str,   default='const-0.5-cos')
     parser.add_argument('--grad_clip',  type=float, default=2.0)
     parser.add_argument('--ema_decay',  type=float,   default=0.9999)
     # training acceleration and device setting
     parser.add_argument('--compile',    action=boa, default=False)
-    parser.add_argument('--workers',    type=int,   default=4)
+    parser.add_argument('--workers',    type=int,   default=1)
     cfg = parser.parse_args()
 
     # default settings
@@ -95,8 +129,22 @@ def main():
             wbrun.log(log_dict, step=step)
 
     # final evaluation
-    vr_evaluate(model_ema, valloader, wbrun, step)
+    #vr_evaluate(model_ema, valloader, wbrun, step)
     save_checkpoints(log_dir, step, model, model_ema, optimizer)
+
+    indices, losses = compute_loss_per_image(
+        model_ema.module if hasattr(model_ema, 'module') else model_ema,
+        trainset,
+        device
+    )
+    top_indices = select_top_k_percent(indices, losses, percent=0.7)
+    with open('top_val_indices.txt', 'w') as f:
+        for idx in top_indices:
+            f.write(f"{idx}\n")
+
+
+
+    
 
 
 if __name__ == '__main__':
